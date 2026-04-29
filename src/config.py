@@ -119,4 +119,4 @@ FEATURES = {
 # ── Hand Tracking ────────────────────────────────────────
 HAND_TRACKING_CAMERA_INDEX = 0
 HAND_TRACKING_PIP_SIZE = (160, 120)  # Picture-in-picture size
-HAND_TRACKING_SMOOTHING = 0.3        # Lower = smoother, higher = responsive
+HAND_TRACKING_SMOOTHING = 0.6        # Higher = more responsive, lower = smoother
