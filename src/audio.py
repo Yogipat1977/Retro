@@ -29,20 +29,22 @@ class AudioEngine:
         self._init_mixer()
 
     def _init_mixer(self):
-        """Initialize the pygame mixer."""
+        """Initialize the pygame mixer with standard high-compatibility settings."""
         if not MIXER_AVAILABLE:
             return
         try:
-            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+            # Try standard 44100Hz which is more compatible with Linux sound servers
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
             self.initialized = True
             self._generate_all_sounds()
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ Audio Warning: Mixer init failed: {e}")
             self.initialized = False
 
     def _make_sound_numpy(self, freq, duration=0.1, wave_type="sine",
                           decay=20, volume=0.5):
         """Generate a sound using numpy (fast)."""
-        sample_rate = 22050
+        sample_rate = 44100
         n = int(sample_rate * duration)
         t = np.linspace(0, duration, n, dtype=np.float32)
 
@@ -68,7 +70,7 @@ class AudioEngine:
 
     def _make_sound_basic(self, freq, duration=0.1, decay=20):
         """Generate a sound using basic Python (fallback, slower)."""
-        sample_rate = 22050
+        sample_rate = 44100
         n = int(sample_rate * duration)
         buf = bytearray(n * 4)  # 16-bit stereo = 4 bytes per sample
 
@@ -94,7 +96,7 @@ class AudioEngine:
         if not NUMPY_AVAILABLE:
             return self._make_sound_basic(base_freq, steps * step_time)
 
-        sample_rate = 22050
+        sample_rate = 44100
         total_duration = steps * step_time
         n = int(sample_rate * total_duration)
         t = np.linspace(0, total_duration, n, dtype=np.float32)
