@@ -147,9 +147,13 @@ class HandTracker:
                 if result.hand_landmarks:
                     hand_detected = True
                     # Use landmark 9 (Middle finger MCP) for stability
-                    # result.hand_landmarks is a list of lists of landmarks
                     lm = result.hand_landmarks[0][9]
-                    paddle_y = lm.y
+                    
+                    # Apply range re-mapping (0.15 to 0.85 in camera -> 0.0 to 1.0 in game)
+                    # This makes it easier to reach the top/bottom edges of the screen
+                    margin = 0.15
+                    paddle_y = (lm.y - margin) / (1.0 - 2 * margin)
+                    paddle_y = max(0.0, min(1.0, paddle_y))
 
                     # Draw a simple dot on the frame for feedback (manual drawing)
                     h, w, _ = frame.shape
