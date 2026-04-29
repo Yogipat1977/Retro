@@ -1,79 +1,87 @@
-# AUTOPILOT PONG — Hackathon Spec
+# AUTOPILOT PONG v2.0 — Hackathon Spec
 
 ## Project Overview
-- **Name**: Autopilot Pong
-- **Type**: Arcade Game / AI Spectator
-- **Core**: Retro Pong with AI battle modes and cyberpunk aesthetics
-- **Target**: Hackathon demo (3hr build time)
+- **Name**: Autopilot Pong — Hackathon Edition
+- **Type**: Arcade Game / AI Spectator / Hand Tracking Demo
+- **Core**: Retro Pong with multi-ball difficulty, hand tracking, power-ups, AI personalities
+- **Stack**: Python 3 + Pygame + MediaPipe + OpenCV + NumPy
+
+## Key Differentiators
+1. **Hand Tracking**: Webcam-based paddle control via MediaPipe
+2. **Multi-Ball Difficulty**: 1–5 simultaneous balls based on level
+3. **Power-Up System**: 6 unique power-ups with visual effects
+4. **AI Personalities**: 4 profiles with adaptive difficulty
+5. **Zero External Assets**: All graphics and audio generated in code
+6. **Modular Architecture**: 9 clean, self-contained modules
 
 ## Visual Specification
 
-### Scene Setup
-- **Resolution**: 800x600, scaled to window
-- **Background**: Dark (#0a0a0f) with subtle grid lines
-- **Court**: Classic center line (dashed), neon glow
-
 ### Color Palette
-- Primary: Cyan (#00ffff)
-- Secondary: Magenta (#ff00ff)
-- Accent: Yellow (#ffff00)
-- Ball: White with cyan glow
-- Player paddle: Cyan
-- AI paddle: Magenta
+- Primary: Cyan (#00ffff) — Player
+- Secondary: Magenta (#ff00ff) — AI
+- Accent: Yellow (#ffff00) — UI highlights
+- Fireball: Orange (#ff8c00)
+- Freeze: Ice Blue (#64c8ff)
+- Background: Dark (#0a0a0f) with grid
 
 ### Effects
-- CRT scanlines overlay
-- Chromatic aberration on edges
-- Ball trail (motion blur)
-- Glow/bloom on paddles and ball
-- Screen shake on goal
+- CRT scanlines + vignette
+- Additive-blended neon particle system (300 max)
+- Chromatic aberration (intensifies during shake)
+- Ball trails (cyan glow / fire trail)
+- Pulsing paddle glow
+- Speed lines at high velocity
+- Confetti on win
 
 ## Game Modes
+1. **VS AI** — Player vs AI, first to 11
+2. **ZEN** — AI vs AI spectator mode
+3. **SYMBIOSIS** — AI-assisted play with trajectory prediction
 
-### 1. VS AI (Default)
-- Player controls left paddle (UP/DOWN or W/S)
-- AI controls right paddle
-- First to 11 wins
+## Difficulty System
+- Level 1: 1 ball (classic)
+- Level 2: 2 balls
+- Level 3: 3 balls
+- Level 4: 4 balls
+- Level 5: 5 balls (chaos)
 
-### 2. ZEN MODE (AI vs AI)
-- Both paddles controlled by AI
-- Player watches and presses SPACE to "nudge" difficulty
-- Real-time difficulty display
+## Power-Ups
+- FIREBALL: 2x speed + fire trail (5s)
+- FREEZE: Opponent paddle frozen (2s)
+- GROW: Player paddle 2x size (5s)
+- SHRINK: Opponent paddle 50% (5s)
+- GHOST: Ball semi-invisible (5s)
+- MULTIBALL: Splits all balls into 3
 
-### 3. SYMBIOSIS MODE (AI Assist)
-- AI helps catch difficult balls (rubber-band assist)
-- Trajectory prediction line shown
-- Reduced difficulty curve
+## AI Profiles
+- ROOKIE: Clumsy, slow, sometimes wrong direction
+- TACTICIAN: Trajectory prediction, corner shots
+- BERSERKER: Max speed, aggressive
+- ZEN MASTER: Near-perfect, minimal movement
 
 ## Physics
-- Ball speed: starts 5, increases 0.2 per hit
-- Max ball speed: 12
-- Paddle momentum: ball inherits 20% paddle velocity
+- Ball speed: starts 5, +0.2 per hit, max 12
+- Paddle momentum transfer: 15%
 - Wall bounce: simple reflection
-- Goal: ball passes paddle edge
+- Fireball: 2x speed multiplier
 
-## AI Behavior
-- **Easy**: 60% accuracy, slow reaction
-- **Medium**: 80% accuracy, moderate reaction
-- **Hard**: 95% accuracy, instant reaction
-
-## Audio
-- Procedural blip on paddle hit (pitch varies with ball speed)
-- Blip on wall bounce
-- Buzz on goal
-- Beat pulse on scoring (if time permits)
-
-## Controls
-- **W/S or Arrow UP/DOWN**: Move paddle
-- **SPACE**: Pause / Start / Mode select
-- **ESC**: Quit
-- **1/2/3**: Switch AI difficulty
+## Audio (Procedural)
+- Sine, square, sawtooth waveform synthesis
+- Dynamic pitch based on ball speed
+- Rising arpeggio on power-up pickup
+- All generated in-memory (no files)
 
 ## Acceptance Criteria
-- [ ] Smooth 60fps gameplay
-- [ ] Ball physics feel "right" (responsive, predictable)
-- [ ] AI is beatable but challenging
-- [ ] CRT effect visible but not distracting
-- [ ] Sound effects on all interactions
-- [ ] Score tracked correctly
-- [ ] Win condition triggers replay option
+- [x] Smooth 60fps gameplay
+- [x] Multi-ball difficulty (1-5 balls)
+- [x] Hand tracking via webcam (optional)
+- [x] 6 power-ups with visual effects
+- [x] 4 AI personality profiles
+- [x] Neon particle system with additive blending
+- [x] CRT scanline effect
+- [x] Procedural audio
+- [x] Combo counter
+- [x] Adaptive AI difficulty
+- [x] One-command setup (setup.sh/setup.bat)
+- [x] Graceful fallback for missing dependencies
+- [x] Comprehensive README for judges

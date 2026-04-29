@@ -1,24 +1,50 @@
+"""
+AUTOPILOT PONG v2.0 — Hackathon Edition
+Retro-futurist Pong with hand tracking, multi-ball difficulty,
+power-ups, particle effects, and procedural audio.
+"""
+
 import pygame
 import random
 import math
 import sys
 from enum import Enum
 
+from config import (
+    WIDTH, HEIGHT, FPS, COLORS, FEATURES,
+    PADDLE_WIDTH, PADDLE_HEIGHT, PADDLE_SPEED, PADDLE_MARGIN, PADDLE_FRICTION,
+    BALL_RADIUS, BALL_INITIAL_SPEED, BALL_SPEED_INCREMENT,
+    BALL_MAX_SPEED, BALL_MOMENTUM_TRANSFER,
+    MAX_DIFFICULTY_LEVEL, BALLS_PER_LEVEL, WIN_SCORE,
+    AI_PROFILES
+)
+from particles import ParticleEmitter
+from effects import (
+    ScreenShake, draw_crt_overlay, draw_chromatic_aberration,
+    draw_paddle_glow, draw_ball_glow, draw_speed_lines,
+    draw_grid, draw_center_line, draw_background_pulse
+)
+from powerups import PowerUpManager
+from ai_controller import AIController
+from audio import AudioEngine
+from ui import (
+    ComboCounter, ScorePopup, TransitionManager,
+    SpeedIndicator, DifficultyDisplay,
+    draw_menu, draw_game_over, draw_paused
+)
+
+# Hand tracking is optional — import gracefully
+try:
+    from hand_tracker import HandTracker
+    HAND_TRACKING_AVAILABLE = True
+except ImportError:
+    HAND_TRACKING_AVAILABLE = False
+
+
 pygame.init()
 
-WIDTH, HEIGHT = 800, 600
-FPS = 60
 
-COLORS = {
-    "bg": (10, 10, 15),
-    "cyan": (0, 255, 255),
-    "magenta": (255, 0, 255),
-    "yellow": (255, 255, 0),
-    "white": (255, 255, 255),
-    "gray": (40, 40, 50),
-    "grid": (20, 20, 30),
-}
-
+# ── Game Mode Enum ───────────────────────────────────────
 
 class GameMode(Enum):
     VS_AI = 1
@@ -26,93 +52,140 @@ class GameMode(Enum):
     SYMBIOSIS = 3
 
 
+# ── Ball Object ──────────────────────────────────────────
+
+class Ball:
+    """A single ball with position, velocity, and state."""
+
+    def __init__(self, x=None, y=None, vx=None, vy=None):
+        self.x = x or WIDTH // 2
+        self.y = y or HEIGHT // 2
+        angle = random.uniform(-math.pi / 4, math.pi / 4)
+        self.vx = vx or (BALL_INITIAL_SPEED * random.choice([-1, 1]))
+        self.vy = vy or (BALL_INITIAL_SPEED * math.sin(angle))
+        self.active = True
+        self.hit_count = 0
+        self.ghost = False     # Ghost power-up
+        self.fireball = False  # Fireball power-up
+
+    def speed(self):
+        return math.sqrt(self.vx ** 2 + self.vy ** 2)
+
+    def to_dict(self):
+        return {"x": self.x, "y": self.y, "vx": self.vx, "vy": self.vy,
+                "active": self.active}
+
+
+# ── Main Game ────────────────────────────────────────────
+
 class Game:
     def __init__(self):
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("AUTOPILOT PONG")
+        pygame.display.set_caption("AUTOPILOT PONG — Hackathon Edition")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.Font(None, 40)
-        self.big_font = pygame.font.Font(None, 80)
-        self.small_font = pygame.font.Font(None, 24)
 
+        # Fonts
+        self.small_font = pygame.font.Font(None, 28)
+        self.font = pygame.font.Font(None, 48)
+        self.big_font = pygame.font.Font(None, 96)
+        self.hud_font = pygame.font.Font(None, 24)
+
+        # Game state
         self.mode = GameMode.VS_AI
-        self.ai_difficulty = 2
-        self.diff_names = {1: "EASY", 2: "MEDIUM", 3: "HARD"}
+        self.state = "menu"        # menu, playing, paused, game_over
+        self.difficulty_level = 1  # 1-5, controls number of balls
+        self.menu_phase = 0        # Animation phase
 
-        self.state = "menu"
-        self.shake_timer = 0
-        self.shake_offset = [0, 0]
+        # Systems
+        self.particles = ParticleEmitter()
+        self.shake = ScreenShake()
+        self.powerups = PowerUpManager()
+        self.audio = AudioEngine()
+        self.combo = ComboCounter()
+        self.transition = TransitionManager()
+        self.speed_indicator = SpeedIndicator()
+        self.difficulty_display = DifficultyDisplay()
+        self.score_popups = []
 
-        self.trail = []
-        self.max_trail = 8
+        # AI
+        self.ai = AIController("TACTICIAN")
+        self.ai_profile_index = 1
+        self.ai_profile_names = list(AI_PROFILES.keys())
+
+        # Hand tracking
+        self.hand_tracker = None
+        self.hand_tracking_active = False
+        if HAND_TRACKING_AVAILABLE:
+            self.hand_tracker = HandTracker()
+
+        # Hit flash timer
+        self.hit_flash = 0
 
         self.reset_game()
-        self.sounds = {}
-        self.load_sounds()
-
-    def load_sounds(self):
-        try:
-            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
-
-            def make_sound(freq, duration=0.1):
-                sample_rate = 22050
-                n = int(sample_rate * duration)
-                buf = bytearray(n * 2)
-                for i in range(n):
-                    t = i / sample_rate
-                    val = int(
-                        32767 * math.sin(2 * math.pi * freq * t) * math.exp(-t * 20)
-                    )
-                    buf[i * 2] = val & 255
-                    buf[i * 2 + 1] = (val >> 8) & 255
-                return pygame.mixer.Sound(buffer=bytearray(buf))
-
-            self.sounds = {
-                "paddle": make_sound(440, 0.08),
-                "wall": make_sound(220, 0.05),
-                "goal": make_sound(150, 0.3),
-                "win": make_sound(880, 0.2),
-            }
-        except Exception:
-            self.sounds = {}
-
-    def play_sound(self, name):
-        if name in self.sounds:
-            try:
-                self.sounds[name].play()
-            except:
-                pass
 
     def reset_game(self):
-        self.player_y = HEIGHT // 2 - 50
-        self.ai_y = HEIGHT // 2 - 50
+        """Reset all game state for a new match."""
+        # Paddles
+        self.player_y = HEIGHT // 2 - PADDLE_HEIGHT // 2
+        self.ai_y = HEIGHT // 2 - PADDLE_HEIGHT // 2
+        self.player_vel = 0
+        self.player_paddle_h = PADDLE_HEIGHT
+        self.ai_paddle_h = PADDLE_HEIGHT
+
+        # Score
         self.player_score = 0
         self.ai_score = 0
+        self.winner = None
 
-        self.ball_x = WIDTH // 2
-        self.ball_y = HEIGHT // 2
-        angle = random.uniform(-math.pi / 4, math.pi / 4)
-        self.ball_vx = 5 * random.choice([-1, 1])
-        self.ball_vy = 5 * math.sin(angle)
+        # Balls — create based on difficulty level
+        self.balls = []
+        self.spawn_balls(self.difficulty_level)
 
-        self.paddle_h = 100
-        self.paddle_w = 12
-        self.paddle_speed = 8
-        self.player_vel = 0
+        # Reset systems
+        self.particles.clear()
+        self.powerups.reset()
+        self.combo = ComboCounter()
+        self.score_popups = []
+        self.hit_flash = 0
 
-        self.hit_count = 0
-        self.trail = []
+        # Reset paddle sizes (power-up effects)
+        self.freeze_timer = 0
+
+    def spawn_balls(self, count):
+        """Spawn the specified number of balls with staggered positions."""
+        self.balls = []
+        for i in range(count):
+            # Stagger spawn positions and directions
+            offset_y = (i - count // 2) * 60
+            ball = Ball(
+                x=WIDTH // 2,
+                y=HEIGHT // 2 + offset_y,
+            )
+            # Alternate directions for multi-ball
+            if i % 2 == 1:
+                ball.vx = -ball.vx
+            self.balls.append(ball)
 
     def handle_events(self):
+        """Process all input events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    return False
+                    if self.state == "playing":
+                        self.state = "paused"
+                    elif self.state == "paused":
+                        self.state = "playing"
+                    else:
+                        return False
+
                 if event.key == pygame.K_SPACE:
                     if self.state == "menu":
+                        self.audio.play("select")
                         self.state = "playing"
+                        self.transition.fade_in()
                     elif self.state == "playing":
                         self.state = "paused"
                     elif self.state == "paused":
@@ -120,318 +193,562 @@ class Game:
                     elif self.state == "game_over":
                         self.reset_game()
                         self.state = "playing"
-                if event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
-                    self.ai_difficulty = int(event.key) - 0
-                    if event.key == pygame.K_1:
-                        self.ai_difficulty = 1
-                    elif event.key == pygame.K_2:
-                        self.ai_difficulty = 2
-                    elif event.key == pygame.K_3:
-                        self.ai_difficulty = 3
-                if event.key == pygame.K_2 and self.state == "menu":
-                    self.mode = GameMode.ZEN
-                    self.state = "playing"
-                if event.key == pygame.K_3 and self.state == "menu":
-                    self.mode = GameMode.SYMBIOSIS
-                    self.state = "playing"
+                        self.transition.fade_in()
+
+                # Difficulty levels 1-5 (multi-ball)
+                if event.key in (pygame.K_1, pygame.K_2, pygame.K_3,
+                                 pygame.K_4, pygame.K_5):
+                    new_level = event.key - pygame.K_0
+                    if 1 <= new_level <= MAX_DIFFICULTY_LEVEL:
+                        self.difficulty_level = new_level
+                        self.difficulty_display.set_level(new_level)
+                        if self.state == "menu":
+                            # In menu, 2 and 3 also select modes
+                            if new_level == 2:
+                                self.mode = GameMode.ZEN
+                            elif new_level == 3:
+                                self.mode = GameMode.SYMBIOSIS
+                            else:
+                                self.mode = GameMode.VS_AI
+                        elif self.state == "playing":
+                            # Mid-game difficulty change: respawn balls
+                            self.spawn_balls(BALLS_PER_LEVEL[new_level])
+                            self.audio.play("levelup")
+
+                # Mode selection (from menu)
+                if self.state == "menu":
+                    if event.key == pygame.K_z:
+                        self.mode = GameMode.ZEN
+                        self.audio.play("select")
+                    elif event.key == pygame.K_x:
+                        self.mode = GameMode.SYMBIOSIS
+                        self.audio.play("select")
+
+                # Toggle hand tracking
+                if event.key == pygame.K_h:
+                    self._toggle_hand_tracking()
+
+                # Cycle AI profile with P key
+                if event.key == pygame.K_p:
+                    self.ai_profile_index = (
+                        (self.ai_profile_index + 1) % len(self.ai_profile_names)
+                    )
+                    name = self.ai_profile_names[self.ai_profile_index]
+                    self.ai.set_profile(name)
+                    self.audio.play("select")
+
+                # Return to menu with M key
+                if event.key == pygame.K_m:
+                    if self.state != "menu":
+                        self.state = "menu"
+                        self.audio.play("select")
+                        self.reset_game()
+
+                # Quit with Q key
+                if event.key == pygame.K_q:
+                    return False
+
         return True
 
-    def update(self):
-        if self.state != "playing":
+    def _toggle_hand_tracking(self):
+        """Toggle hand tracking on/off."""
+        if not HAND_TRACKING_AVAILABLE or not self.hand_tracker:
             return
 
-        keys = pygame.key.get_pressed()
-
-        if self.mode != GameMode.ZEN:
-            if keys[pygame.K_w] or keys[pygame.K_UP]:
-                self.player_vel = -self.paddle_speed
-            elif keys[pygame.K_s] or keys[pygame.K_DOWN]:
-                self.player_vel = self.paddle_speed
-            else:
-                self.player_vel *= 0.8
+        if self.hand_tracking_active:
+            self.hand_tracker.stop()
+            self.hand_tracking_active = False
         else:
+            if self.hand_tracker.is_available():
+                success = self.hand_tracker.start()
+                self.hand_tracking_active = success
+
+    def update(self):
+        """Main update loop."""
+        if self.state != "playing":
+            self.menu_phase += 0.02
+            self.transition.update()
+            return
+
+        # ── Player Input ──
+        if self.mode != GameMode.ZEN:
+            if self.hand_tracking_active and self.hand_tracker:
+                # Hand tracking control
+                normalized_y = self.hand_tracker.get_paddle_y()
+                target_y = normalized_y * (HEIGHT - self.player_paddle_h)
+                self.player_vel = (target_y - self.player_y) * 0.3
+            else:
+                # Keyboard control
+                keys = pygame.key.get_pressed()
+                if keys[pygame.K_w] or keys[pygame.K_UP]:
+                    self.player_vel = -PADDLE_SPEED
+                elif keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                    self.player_vel = PADDLE_SPEED
+                else:
+                    self.player_vel *= PADDLE_FRICTION
+        else:
+            # ZEN mode: AI controls left paddle too
+            self.player_y = self._zen_left_ai()
             self.player_vel = 0
 
         self.player_y += self.player_vel
-        self.player_y = max(0, min(HEIGHT - self.paddle_h, self.player_y))
+        self.player_y = max(0, min(HEIGHT - self.player_paddle_h, self.player_y))
 
-        self.update_ai()
-        self.update_ball()
-        self.update_trail()
-        self.update_shake()
+        # ── Freeze check ──
+        is_frozen = self.freeze_timer > 0
+        if is_frozen:
+            self.freeze_timer -= 1 / FPS
 
-    def update_ai(self):
-        difficulty_map = {
-            1: (0.4, 0.6, 4),
-            2: (0.6, 0.85, 6),
-            3: (0.85, 1.0, 8),
-        }
-        reaction, accuracy, speed = difficulty_map[self.ai_difficulty]
+        # ── AI ──
+        multi_ball_data = [b.to_dict() for b in self.balls if b.active]
+        primary_ball = self.balls[0] if self.balls else None
 
-        if self.mode == GameMode.ZEN:
-            reaction = min(1.0, reaction + 0.1)
-            accuracy = min(1.0, accuracy + 0.05)
-
-        target_y = self.ball_y - self.paddle_h // 2
-        diff = target_y - self.ai_y
-
-        if random.random() < reaction:
-            if abs(diff) > 10:
-                move = speed if diff > 0 else -speed
-                if random.random() < accuracy:
-                    self.ai_y += move
-                else:
-                    self.ai_y += move * random.uniform(0.3, 0.7)
-
-        if self.mode == GameMode.SYMBIOSIS:
-            player_center = self.player_y + self.paddle_h // 2
-            dist = abs(self.ball_x - (WIDTH - 100))
-            if dist < 200 and self.ball_vx > 0:
-                target = (self.ball_y + player_center) / 2
-                self.ai_y += (target - self.ai_y) * 0.1
-
-        self.ai_y = max(0, min(HEIGHT - self.paddle_h, self.ai_y))
-
-    def update_ball(self):
-        self.trail.append((self.ball_x, self.ball_y))
-        if len(self.trail) > self.max_trail:
-            self.trail.pop(0)
-
-        self.ball_x += self.ball_vx
-        self.ball_y += self.ball_vy
-
-        if self.ball_y <= 10 or self.ball_y >= HEIGHT - 10:
-            self.ball_vy *= -1
-            self.play_sound("wall")
-
-        player_paddle = pygame.Rect(30, self.player_y, self.paddle_w, self.paddle_h)
-        ai_paddle = pygame.Rect(
-            WIDTH - 30 - self.paddle_w, self.ai_y, self.paddle_w, self.paddle_h
+        self.ai_y = self.ai.update(
+            self.ai_y, self.ai_paddle_h,
+            primary_ball.x if primary_ball else WIDTH // 2,
+            primary_ball.y if primary_ball else HEIGHT // 2,
+            primary_ball.vx if primary_ball else 0,
+            primary_ball.vy if primary_ball else 0,
+            WIDTH - PADDLE_MARGIN,
+            self.player_score, self.ai_score,
+            is_frozen=is_frozen,
+            multi_balls=multi_ball_data
         )
 
-        if player_paddle.collidepoint(self.ball_x, self.ball_y):
-            self.ball_vx = abs(self.ball_vx) + 0.2
-            self.ball_vy += self.player_vel * 0.15
-            self.ball_vy = max(-8, min(8, self.ball_vy))
-            self.ball_x = player_paddle.right + 1
-            self.hit_count += 1
-            self.play_sound("paddle")
-            self.update_pitch()
+        # ── Power-ups ──
+        if FEATURES["powerups"]:
+            self.powerups.update(1 / FPS)
 
-        if ai_paddle.collidepoint(self.ball_x, self.ball_y):
-            self.ball_vx = -abs(self.ball_vx) - 0.2
-            self.ball_vx = max(-12, self.ball_vx)
-            self.ball_y += random.uniform(-2, 2)
-            self.hit_count += 1
-            self.play_sound("paddle")
-            self.update_pitch()
+            # Check collision with all balls
+            for ball in self.balls:
+                if not ball.active:
+                    continue
+                result = self.powerups.check_ball_collision(ball.x, ball.y)
+                if result:
+                    ptype, pos, color = result
+                    self.audio.play("powerup")
+                    self.particles.emit_powerup_pickup(pos[0], pos[1], color)
+                    self._apply_powerup(ptype)
 
-        if self.ball_x < 0:
-            self.ai_score += 1
-            self.play_sound("goal")
-            self.shake_timer = 15
-            self.check_win()
-            if self.state == "playing":
-                self.reset_ball()
-
-        if self.ball_x > WIDTH:
-            self.player_score += 1
-            self.play_sound("goal")
-            self.shake_timer = 15
-            self.check_win()
-            if self.state == "playing":
-                self.reset_ball()
-
-    def update_pitch(self):
-        if "paddle" not in self.sounds:
-            return
-        try:
-            speed_factor = min(1.0, (abs(self.ball_vx) - 5) / 7)
-            pitch = 1.0 + speed_factor * 0.5
-            self.sounds["paddle"].set_volume(pitch)
-        except:
-            pass
-
-    def reset_ball(self):
-        self.ball_x = WIDTH // 2
-        self.ball_y = HEIGHT // 2
-        angle = random.uniform(-math.pi / 4, math.pi / 4)
-        self.ball_vx = 5 * random.choice([-1, 1])
-        self.ball_vy = 5 * math.sin(angle)
-        self.trail = []
-
-    def check_win(self):
-        if self.player_score >= 11 or self.ai_score >= 11:
-            self.state = "game_over"
-            self.winner = "PLAYER" if self.player_score >= 11 else "AI"
-            self.play_sound("win")
-
-    def update_trail(self):
-        pass
-
-    def update_shake(self):
-        if self.shake_timer > 0:
-            self.shake_timer -= 1
-            self.shake_offset = [random.randint(-5, 5), random.randint(-5, 5)]
+        # ── Paddle sizes (power-up effects) ──
+        if self.powerups.has_effect("GROW"):
+            self.player_paddle_h = PADDLE_HEIGHT * 2
         else:
-            self.shake_offset = [0, 0]
+            self.player_paddle_h = PADDLE_HEIGHT
 
-    def draw_crt(self, surface):
-        offset = 2
-        chroma_r = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        chroma_b = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        if self.powerups.has_effect("SHRINK"):
+            self.ai_paddle_h = PADDLE_HEIGHT // 2
+        else:
+            self.ai_paddle_h = PADDLE_HEIGHT
 
-        edge_rect_r = pygame.Rect(WIDTH - offset, 0, offset, HEIGHT)
-        edge_rect_b = pygame.Rect(0, 0, offset, HEIGHT)
+        # ── Update all balls ──
+        for ball in self.balls:
+            if ball.active:
+                self._update_ball(ball)
 
-        chroma_r.fill((255, 0, 0, 8), edge_rect_r)
-        chroma_b.fill((0, 0, 255, 8), edge_rect_b)
-        surface.blit(chroma_r, (0, 0))
-        surface.blit(chroma_b, (0, 0))
+        # ── Ball effects from power-ups ──
+        for ball in self.balls:
+            ball.ghost = self.powerups.has_effect("GHOST")
+            ball.fireball = self.powerups.has_effect("FIREBALL")
 
-        for y in range(0, HEIGHT, 3):
-            pygame.draw.line(surface, (0, 0, 0, 50), (0, y), (WIDTH, y))
+        # ── Clean up dead balls, check if we need respawn ──
+        active_balls = [b for b in self.balls if b.active]
+        if not active_balls and self.state == "playing":
+            # All balls scored — respawn
+            self.spawn_balls(BALLS_PER_LEVEL.get(self.difficulty_level, 1))
 
-        vignette = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        for i in range(50):
-            alpha = i * 3
-            pygame.draw.rect(vignette, (0, 0, 0, alpha), (0, 0, WIDTH, HEIGHT), 1)
-        surface.blit(vignette, (0, 0))
+        # ── Systems update ──
+        self.particles.update()
+        self.shake.update()
+        self.combo.update()
+        self.transition.update()
+        self.difficulty_display.update()
+
+        # Speed indicator (fastest ball)
+        if self.balls:
+            max_speed = max((b.speed() for b in self.balls if b.active), default=0)
+            self.speed_indicator.update(max_speed)
+
+        # Score popups
+        for popup in self.score_popups:
+            popup.update()
+        self.score_popups = [p for p in self.score_popups if p.alive]
+
+        # Hit flash
+        if self.hit_flash > 0:
+            self.hit_flash -= 1
+
+        self.menu_phase += 0.02
+
+    def _zen_left_ai(self):
+        """Simple AI for the left paddle in ZEN mode."""
+        if not self.balls:
+            return self.player_y
+
+        # Track closest ball moving left
+        target = HEIGHT // 2
+        closest_dist = float('inf')
+        for ball in self.balls:
+            if ball.active and ball.vx < 0:
+                dist = abs(PADDLE_MARGIN - ball.x)
+                if dist < closest_dist:
+                    closest_dist = dist
+                    target = ball.y
+
+        target_y = target - self.player_paddle_h // 2
+        diff = target_y - self.player_y
+        speed = 6
+        if abs(diff) > 5:
+            return self.player_y + (speed if diff > 0 else -speed)
+        return self.player_y
+
+    def _update_ball(self, ball):
+        """Update a single ball: movement, collisions, scoring."""
+        # Trail particles
+        if FEATURES["particles"]:
+            if ball.fireball:
+                self.particles.emit_fire_trail(ball.x, ball.y)
+            else:
+                trail_color = COLORS["cyan"] if not ball.ghost else (100, 100, 120)
+                self.particles.emit_trail(ball.x, ball.y, trail_color)
+
+        # Move
+        speed_mult = 2.0 if self.powerups.has_effect("FIREBALL") else 1.0
+        ball.x += ball.vx * speed_mult
+        ball.y += ball.vy * speed_mult
+
+        # Wall bounce
+        if ball.y <= BALL_RADIUS or ball.y >= HEIGHT - BALL_RADIUS:
+            ball.vy *= -1
+            ball.y = max(BALL_RADIUS, min(HEIGHT - BALL_RADIUS, ball.y))
+            self.audio.play("wall")
+
+        # ── Robust Collision Detection ──
+        # Create thicker collision rects behind the paddles to catch fast balls
+        player_collision_rect = pygame.Rect(
+            0, self.player_y,
+            PADDLE_MARGIN + PADDLE_WIDTH, self.player_paddle_h
+        )
+        ai_collision_rect = pygame.Rect(
+            WIDTH - PADDLE_MARGIN - PADDLE_WIDTH, self.ai_y,
+            PADDLE_MARGIN + PADDLE_WIDTH, self.ai_paddle_h
+        )
+
+        # Ball bounding box
+        ball_rect = pygame.Rect(
+            ball.x - BALL_RADIUS, ball.y - BALL_RADIUS,
+            BALL_RADIUS * 2, BALL_RADIUS * 2
+        )
+
+        # Player paddle hit
+        if player_collision_rect.colliderect(ball_rect) and ball.vx < 0:
+            ball.vx = abs(ball.vx) + BALL_SPEED_INCREMENT
+            ball.vx = min(BALL_MAX_SPEED, ball.vx)
+            ball.vy += self.player_vel * BALL_MOMENTUM_TRANSFER
+            ball.vy = max(-8, min(8, ball.vy))
+            ball.x = PADDLE_MARGIN + PADDLE_WIDTH + BALL_RADIUS
+            ball.hit_count += 1
+
+            self.audio.play_pitch("paddle", ball.speed() / BALL_MAX_SPEED)
+            self.combo.hit()
+            self.hit_flash = 8
+
+            if FEATURES["particles"]:
+                self.particles.emit_sparks(
+                    PADDLE_MARGIN + PADDLE_WIDTH, ball.y, 1, COLORS["cyan"]
+                )
+
+            # Combo milestone sound
+            if self.combo.count % 5 == 0 and self.combo.count > 0:
+                self.audio.play("combo")
+
+        # AI paddle hit
+        elif ai_collision_rect.colliderect(ball_rect) and ball.vx > 0:
+            ball.vx = -(abs(ball.vx) + BALL_SPEED_INCREMENT)
+            ball.vx = max(-BALL_MAX_SPEED, ball.vx)
+            ball.vy += random.uniform(-1.5, 1.5)
+            ball.x = WIDTH - PADDLE_MARGIN - PADDLE_WIDTH - BALL_RADIUS
+            ball.hit_count += 1
+
+            self.audio.play_pitch("paddle", ball.speed() / BALL_MAX_SPEED)
+            self.hit_flash = 8
+
+            if FEATURES["particles"]:
+                self.particles.emit_sparks(
+                    WIDTH - PADDLE_MARGIN - PADDLE_WIDTH, ball.y, -1, COLORS["magenta"]
+                )
+
+        # ── Scoring ──
+        if ball.x < -BALL_RADIUS:
+            # AI scores
+            self.ai_score += 1
+            self.audio.play("goal")
+            self.shake.trigger(20, 8)
+            self.combo.miss()
+
+            if FEATURES["particles"]:
+                self.particles.emit_burst(0, ball.y, COLORS["magenta"])
+
+            self.score_popups.append(
+                ScorePopup(WIDTH * 3 // 4, HEIGHT // 2, COLORS["magenta"])
+            )
+
+            ball.active = False
+            self._check_win()
+
+        elif ball.x > WIDTH + BALL_RADIUS:
+            # Player scores
+            self.player_score += 1
+            self.audio.play("goal")
+            self.shake.trigger(20, 8)
+
+            if FEATURES["particles"]:
+                self.particles.emit_burst(WIDTH, ball.y, COLORS["cyan"])
+
+            self.score_popups.append(
+                ScorePopup(WIDTH // 4, HEIGHT // 2, COLORS["cyan"])
+            )
+
+            ball.active = False
+            self._check_win()
+
+    def _apply_powerup(self, ptype):
+        """Apply the effect of a collected power-up."""
+        if ptype == "FREEZE":
+            self.freeze_timer = 2.0
+            if FEATURES["particles"]:
+                self.particles.emit_freeze(
+                    WIDTH - PADDLE_MARGIN, self.ai_y + self.ai_paddle_h // 2
+                )
+            self.audio.play("freeze")
+
+        elif ptype == "MULTIBALL":
+            # Split each active ball into 3
+            new_balls = []
+            for ball in self.balls:
+                if ball.active:
+                    for angle_offset in [-0.4, 0, 0.4]:
+                        new_ball = Ball(ball.x, ball.y)
+                        speed = ball.speed()
+                        base_angle = math.atan2(ball.vy, ball.vx) + angle_offset
+                        new_ball.vx = speed * math.cos(base_angle)
+                        new_ball.vy = speed * math.sin(base_angle)
+                        new_balls.append(new_ball)
+            self.balls = new_balls
+            self.audio.play("split")
+
+        # FIREBALL, GHOST, GROW, SHRINK are handled via has_effect checks
+
+    def _check_win(self):
+        """Check if someone reached the win score."""
+        if self.player_score >= WIN_SCORE or self.ai_score >= WIN_SCORE:
+            self.winner = "PLAYER" if self.player_score >= WIN_SCORE else "AI"
+            self.state = "game_over"
+            self.audio.play("win")
+
+    # ── Drawing ──────────────────────────────────────────
 
     def draw(self):
+        """Main draw loop."""
         surface = pygame.Surface((WIDTH, HEIGHT))
         surface.fill(COLORS["bg"])
 
-        for y in range(0, HEIGHT, 40):
-            pygame.draw.line(surface, COLORS["grid"], (0, y), (WIDTH, y), 1)
-        for x in range(0, WIDTH, 40):
-            pygame.draw.line(surface, COLORS["grid"], (x, 0), (x, HEIGHT), 1)
+        # Background
+        draw_grid(surface)
+        draw_center_line(surface)
 
-        pygame.draw.line(
-            surface, COLORS["gray"], (WIDTH // 2, 0), (WIDTH // 2, HEIGHT), 3
-        )
-        for i in range(0, HEIGHT, 20):
-            pygame.draw.line(
-                surface, COLORS["gray"], (WIDTH // 2 - 5, i), (WIDTH // 2 + 5, i), 2
-            )
+        if self.hit_flash > 0:
+            draw_background_pulse(surface, self.hit_flash)
 
-        for i, pos in enumerate(self.trail):
-            alpha = int(255 * (i + 1) / len(self.trail) * 0.5)
-            size = 8 + i
-            glow = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
-            pygame.draw.circle(glow, (*COLORS["cyan"][:3], alpha), (size, size), size)
-            surface.blit(glow, (pos[0] - size, pos[1] - size))
+        # ── Game elements ──
+        if self.state in ("playing", "paused", "game_over"):
+            # Power-ups
+            if FEATURES["powerups"]:
+                self.powerups.draw(surface)
 
-        pygame.draw.rect(
-            surface,
-            COLORS["cyan"],
-            (30, self.player_y, self.paddle_w, self.paddle_h),
-            border_radius=4,
-        )
-        pygame.draw.rect(
-            surface,
-            COLORS["magenta"],
-            (WIDTH - 30 - self.paddle_w, self.ai_y, self.paddle_w, self.paddle_h),
-            border_radius=4,
-        )
+            # Particles (behind paddles)
+            if FEATURES["particles"]:
+                self.particles.draw(surface)
 
-        glow_ball = pygame.Surface((30, 30), pygame.SRCALPHA)
-        pygame.draw.circle(glow_ball, (*COLORS["white"][:3], 100), (15, 15), 15)
-        surface.blit(glow_ball, (self.ball_x - 15, self.ball_y - 15))
-        pygame.draw.circle(
-            surface, COLORS["white"], (int(self.ball_x), int(self.ball_y)), 8
-        )
+            # Paddles with glow
+            draw_paddle_glow(surface,
+                             PADDLE_MARGIN, self.player_y,
+                             PADDLE_WIDTH, self.player_paddle_h,
+                             COLORS["cyan"], self.menu_phase * 3)
+            pygame.draw.rect(surface, COLORS["cyan"],
+                             (PADDLE_MARGIN, self.player_y,
+                              PADDLE_WIDTH, self.player_paddle_h),
+                             border_radius=4)
 
-        if self.mode == GameMode.SYMBIOSIS and self.state == "playing":
-            pred_x = self.ball_x
-            pred_y = self.ball_y
-            pred_vx = self.ball_vx
-            pred_vy = self.ball_vy
-            for _ in range(30):
-                pred_x += pred_vx
-                pred_y += pred_vy
-                if pred_y <= 10 or pred_y >= HEIGHT - 10:
-                    pred_vy *= -1
-            if pred_vx > 0:
-                pygame.draw.line(
-                    surface,
-                    (*COLORS["yellow"][:3], 100),
-                    (int(self.ball_x), int(self.ball_y)),
-                    (int(pred_x), int(pred_y)),
-                    2,
-                )
+            # AI paddle — blue tint if frozen
+            ai_color = COLORS["ice_blue"] if self.freeze_timer > 0 else COLORS["magenta"]
+            draw_paddle_glow(surface,
+                             WIDTH - PADDLE_MARGIN - PADDLE_WIDTH, self.ai_y,
+                             PADDLE_WIDTH, self.ai_paddle_h,
+                             ai_color, self.menu_phase * 3)
+            pygame.draw.rect(surface, ai_color,
+                             (WIDTH - PADDLE_MARGIN - PADDLE_WIDTH, self.ai_y,
+                              PADDLE_WIDTH, self.ai_paddle_h),
+                             border_radius=4)
 
-        score_text = self.font.render(f"{self.player_score}", True, COLORS["cyan"])
-        ai_text = self.font.render(f"{self.ai_score}", True, COLORS["magenta"])
-        surface.blit(score_text, (WIDTH // 4, 30))
-        surface.blit(ai_text, (WIDTH * 3 // 4 - ai_text.get_width(), 30))
+            # Balls
+            for ball in self.balls:
+                if not ball.active:
+                    continue
 
-        mode_text = self.small_font.render(
-            f"{self.mode.name} | AI: {self.diff_names[self.ai_difficulty]}",
-            True,
-            COLORS["gray"],
-        )
-        surface.blit(mode_text, (WIDTH // 2 - mode_text.get_width() // 2, HEIGHT - 30))
+                # Ghost effect: semi-transparent
+                if ball.ghost:
+                    alpha = 40 + int(30 * math.sin(self.menu_phase * 10))
+                    ghost_surf = pygame.Surface((BALL_RADIUS * 4, BALL_RADIUS * 4),
+                                                pygame.SRCALPHA)
+                    pygame.draw.circle(ghost_surf,
+                                       (255, 255, 255, alpha),
+                                       (BALL_RADIUS * 2, BALL_RADIUS * 2),
+                                       BALL_RADIUS)
+                    surface.blit(ghost_surf,
+                                 (int(ball.x) - BALL_RADIUS * 2,
+                                  int(ball.y) - BALL_RADIUS * 2))
+                else:
+                    # Glow
+                    ball_color = COLORS["orange"] if ball.fireball else (255, 255, 255)
+                    draw_ball_glow(surface, ball.x, ball.y, BALL_RADIUS, ball_color)
+                    pygame.draw.circle(surface, ball_color,
+                                       (int(ball.x), int(ball.y)), BALL_RADIUS)
 
+                # Speed lines
+                if FEATURES["speed_lines"]:
+                    draw_speed_lines(surface, ball.speed(), BALL_MAX_SPEED,
+                                     ball.x, ball.y, ball.vx)
+
+            # Symbiosis prediction line
+            if self.mode == GameMode.SYMBIOSIS and self.state == "playing":
+                self._draw_prediction_line(surface)
+
+            # ── HUD ──
+            # Scores
+            p_score = self.big_font.render(str(self.player_score), True, COLORS["cyan"])
+            a_score = self.big_font.render(str(self.ai_score), True, COLORS["magenta"])
+            surface.blit(p_score, (WIDTH // 4 - p_score.get_width() // 2, 20))
+            surface.blit(a_score, (WIDTH * 3 // 4 - a_score.get_width() // 2, 20))
+
+            # Mode & AI info
+            mode_info = f"{self.mode.name} | AI: {self.ai.profile_name}"
+            mode_text = self.hud_font.render(mode_info, True, COLORS["gray"])
+            surface.blit(mode_text, (WIDTH // 2 - mode_text.get_width() // 2,
+                                     HEIGHT - 18))
+
+            # Difficulty display
+            self.difficulty_display.draw(surface, self.small_font, self.font)
+
+            # Speed indicator
+            self.speed_indicator.draw(surface, self.hud_font)
+
+            # Combo counter
+            if FEATURES["combo_counter"]:
+                self.combo.draw(surface, self.font, self.big_font)
+
+            # Power-up HUD
+            if FEATURES["powerups"]:
+                self.powerups.draw_hud(surface, self.hud_font,
+                                       x=10, y=HEIGHT - 80)
+
+            # Score popups
+            for popup in self.score_popups:
+                popup.draw(surface, self.font)
+
+            # Hand tracking indicator
+            if self.hand_tracking_active:
+                ht_text = self.hud_font.render("🖐 HAND TRACKING", True, COLORS["green"])
+                surface.blit(ht_text, (10, 10))
+
+                # PiP webcam overlay
+                if self.hand_tracker:
+                    frame = self.hand_tracker.get_frame()
+                    if frame:
+                        surface.blit(frame, (10, 30))
+
+            # ZEN mode hint
+            if self.mode == GameMode.ZEN and self.state == "playing":
+                zen_text = self.hud_font.render("ZEN MODE — Watch the AI battle",
+                                                True, COLORS["gray"])
+                surface.blit(zen_text, (WIDTH // 2 - zen_text.get_width() // 2, 90))
+
+        # ── State overlays ──
         if self.state == "menu":
-            title = self.big_font.render("AUTOPILOT PONG", True, COLORS["cyan"])
-            surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 100))
-
-            instructions = [
-                "1: VS AI",
-                "2: ZEN (AI vs AI)",
-                "3: SYMBIOSIS (AI Assist)",
-                "",
-                "SPACE: Start",
-                "W/S or UP/DOWN: Move",
-                "1/2/3: AI Difficulty",
-                "ESC: Quit",
-            ]
-            for i, line in enumerate(instructions):
-                text = self.font.render(line, True, COLORS["white"])
-                surface.blit(text, (WIDTH // 2 - text.get_width() // 2, 220 + i * 35))
+            draw_menu(surface, self.font, self.big_font, self.small_font,
+                      self.menu_phase)
 
         elif self.state == "paused":
-            pause = self.big_font.render("PAUSED", True, COLORS["yellow"])
-            surface.blit(pause, (WIDTH // 2 - pause.get_width() // 2, HEIGHT // 2 - 40))
-            hint = self.font.render("SPACE to continue", True, COLORS["white"])
-            surface.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT // 2 + 20))
+            draw_paused(surface, self.font, self.big_font)
 
         elif self.state == "game_over":
-            result = self.big_font.render(
-                f"{self.winner} WINS!",
-                True,
-                COLORS["yellow"] if self.winner == "PLAYER" else COLORS["magenta"],
-            )
-            surface.blit(
-                result, (WIDTH // 2 - result.get_width() // 2, HEIGHT // 2 - 40)
-            )
-            hint = self.font.render("SPACE to play again", True, COLORS["white"])
-            surface.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT // 2 + 30))
+            draw_game_over(surface, self.winner,
+                           self.player_score, self.ai_score,
+                           self.combo.best,
+                           self.font, self.big_font, self.small_font)
+            # Celebration particles
+            if FEATURES["particles"]:
+                self.particles.emit_confetti(WIDTH, HEIGHT)
+                self.particles.update()
 
-        elif self.state == "playing" and self.mode == GameMode.ZEN:
-            zen_hint = self.small_font.render(
-                "ZEN MODE: Watch the AI battle", True, COLORS["gray"]
-            )
-            surface.blit(zen_hint, (WIDTH // 2 - zen_hint.get_width() // 2, 60))
+        # ── Post-processing ──
+        if FEATURES["crt_effect"]:
+            draw_crt_overlay(surface)
+            aberration_intensity = 1.0 + (2.0 if self.shake.active else 0)
+            draw_chromatic_aberration(surface, aberration_intensity)
 
-        self.draw_crt(surface)
+        # Transitions
+        self.transition.draw(surface)
 
-        final = pygame.transform.scale(surface, (WIDTH, HEIGHT))
-        final.blit(pygame.Surface((0, 0)), self.shake_offset)
+        # Apply screen shake
+        self.screen.fill((0, 0, 0))
+        self.screen.blit(surface, self.shake.offset)
 
-        self.screen.blit(final, self.shake_offset)
         pygame.display.flip()
 
+    def _draw_prediction_line(self, surface):
+        """Draw ball trajectory prediction in SYMBIOSIS mode."""
+        for ball in self.balls:
+            if not ball.active or ball.vx <= 0:
+                continue
+
+            pred_x, pred_y = ball.x, ball.y
+            pred_vx, pred_vy = ball.vx, ball.vy
+
+            points = [(int(pred_x), int(pred_y))]
+            for _ in range(40):
+                pred_x += pred_vx
+                pred_y += pred_vy
+                if pred_y <= BALL_RADIUS or pred_y >= HEIGHT - BALL_RADIUS:
+                    pred_vy *= -1
+                points.append((int(pred_x), int(pred_y)))
+                if pred_x > WIDTH:
+                    break
+
+            if len(points) > 1:
+                pred_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                pygame.draw.lines(pred_surf, (*COLORS["yellow"][:3], 60),
+                                  False, points, 2)
+                surface.blit(pred_surf, (0, 0))
+
     def run(self):
+        """Main game loop."""
         running = True
         while running:
             running = self.handle_events()
             self.update()
             self.draw()
             self.clock.tick(FPS)
-        pygame.quit()
 
+        # Cleanup
+        if self.hand_tracking_active and self.hand_tracker:
+            self.hand_tracker.stop()
+        pygame.quit()
+        sys.exit()
+
+
+# ── Entry Point ──────────────────────────────────────────
 
 if __name__ == "__main__":
-    Game().run()
+    game = Game()
+    game.run()
