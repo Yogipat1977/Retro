@@ -245,11 +245,11 @@ def draw_menu(surface, font, big_font, small_font, pulse_phase):
 
     # Main title
     title = big_font.render(title_text, True, COLORS["cyan"])
-    surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 100))
+    surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 120))
 
     # Subtitle
     sub = small_font.render("RETRO-FUTURIST ARCADE", True, COLORS["magenta"])
-    surface.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 170))
+    surface.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 210))
 
     # Menu items with staggered animation
     items = [
@@ -264,22 +264,28 @@ def draw_menu(surface, font, big_font, small_font, pulse_phase):
         ("Q", "QUIT GAME", COLORS["gray"]),
     ]
 
-    y_start = 220
+    y_start = 280
     for i, (key, desc, color) in enumerate(items):
         if not key:
-            y_start += 5
+            y_start += 15
             continue
 
         # Animate entry
-        entry_offset = max(0, math.sin(pulse_phase - i * 0.15)) * 3
+        entry_offset = max(0, math.sin(pulse_phase * 1.5 - i * 0.2)) * 5
 
-        y = y_start + i * 32 + int(entry_offset)
+        y = y_start + i * 42 + int(entry_offset)
 
-        key_surf = font.render(f"[{key}]", True, color)
-        desc_surf = small_font.render(desc, True, (180, 180, 190))
+        if key:
+            key_text = f"[{key}]"
+            key_surf = font.render(key_text, True, color)
+            desc_surf = small_font.render(desc, True, (180, 180, 190))
 
-        surface.blit(key_surf, (WIDTH // 2 - 180, y))
-        surface.blit(desc_surf, (WIDTH // 2 - 80, y + 4))
+            # Left-align keys at a centered column
+            key_x = WIDTH // 2 - 240
+            desc_x = WIDTH // 2 - 80
+            
+            surface.blit(key_surf, (key_x, y))
+            surface.blit(desc_surf, (desc_x, y + 6))
 
     # Version / credits
     ver = small_font.render("v2.0 • HACKATHON EDITION", True, COLORS["dark_gray"])
