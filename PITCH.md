@@ -27,8 +27,8 @@ The paddle opponent uses **Heuristic AI** and **Predictive Physics Modeling**.
 
 ## 🎨 The "Zero-Asset" Engine
 To demonstrate procedural creativity, this project contains **Zero Images and Zero Audio Files**.
-*   **Procedural Visuals**: Additive glow, chromatic aberration, and particle systems are generated entirely through mathematical functions.
-*   **Procedural Audio**: All SFX are **synthesized in real-time** via waveforms (Sine, Square, Sawtooth). On Linux, we even implemented a custom **WAV-Fallback engine** to ensure audio compatibility across all drivers.
+*   **Visuals**: Additive glow, chromatic aberration, and particle systems are rendered via pure mathematical functions.
+*   **Audio**: All SFX are **synthesized in real-time** via waveforms (Sine, Square, Sawtooth). The game features a smart **Cross-Platform Audio Fallback** (WAV synthesis + Native OS players) to ensure sound works on any Linux or Windows environment.
 
 ---
 

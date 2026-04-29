@@ -135,14 +135,25 @@ class AudioEngine:
             return
         
         if self.use_fallback:
-            # Use paplay in a background process to avoid blocking
-            try:
-                subprocess.Popen(["paplay", self.sounds[name]], 
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except:
+            # Linux Fallback (paplay/pw-play)
+            if os.name != 'nt':
                 try:
-                    subprocess.Popen(["pw-play", self.sounds[name]], 
+                    subprocess.Popen(["paplay", self.sounds[name]], 
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except:
+                    try:
+                        subprocess.Popen(["pw-play", self.sounds[name]], 
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except:
+                        pass
+            # Windows Fallback (winsound)
+            else:
+                try:
+                    import winsound
+                    # winsound.PlaySound is blocking, so we use a thread
+                    threading.Thread(target=winsound.PlaySound, 
+                                     args=(self.sounds[name], winsound.SND_FILENAME | winsound.SND_ASYNC), 
+                                     daemon=True).start()
                 except:
                     pass
         else:
