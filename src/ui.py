@@ -180,7 +180,7 @@ class SpeedIndicator:
         pygame.draw.rect(surface, COLORS["gray"], (x, y, bar_w, bar_h), 1)
 
         # Label
-        label = font.render("SPEED", True, COLORS["gray"])
+        label = font.render("SPEED", True, COLORS["white"])
         surface.blit(label, (x, y - 16))
 
 
@@ -219,7 +219,7 @@ class DifficultyDisplay:
             surface.blit(balls_text, (x - balls_text.get_width() // 2, y + 30))
         else:
             text = font.render(f"LVL {self.level} • {self.level} BALL{'S' if self.level > 1 else ''}",
-                               True, color)
+                               True, COLORS["white"])
             surface.blit(text, (x - text.get_width() // 2, y))
 
 
